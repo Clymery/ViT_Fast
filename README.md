@@ -4,13 +4,13 @@
 
 ## 核心发现
 
-**降采样 168×168 是最简单有效的方案** —— 只需一行 `Resize`，计算量减半，精度几乎不受影响（或根据数据集特性略有下降）。
+**MAE + Router 可以在保留 75% patch 的情况下几乎不掉精度（-0.59%）**，并减少 25% 计算量。实验证明 ViT 的 patch 冗余度很高，通过学习型 Router 可以有效过滤不重要 patch。
 
-| 方案 | 额外成本 | Oxford Pets | Food-101 |
-|:----|:--------:|:-----------:|:--------:|
-| 降采样 168×168 | 无 | -1.26% | -1.50% |
-| 灰度图 | 无 | -1.23% | — |
-| MAE + Router (50%) | 需训练 Router + Decoder | -3.11% | -1.85% |
+| 方法 | CIFAR-100 | vs Baseline |
+|:----|:--------:|:----------:|
+| Baseline | 91.69% | — |
+| MAE + Router (keep 75%) | **91.10%** | **-0.59%** |
+| MAE + Router (keep 50%) | **89.07%** | **-2.62%** |
 
 **更详细的实验记录见 [EXPERIMENTS.md](EXPERIMENTS.md)**。研究故事见 [docs/research_story.md](docs/research_story.md)。
 
@@ -25,11 +25,7 @@
 ├── train.py                      # 通用训练脚本（baseline / Gumbel）
 ├── train_patch_selection_mae.py  # MAE + Router 训练脚本
 ├── train_router_distill.py       # 注意力蒸馏脚本
-├── test_downsample_train.py      # 降采样训练脚本
-├── test_grayscale_train.py       # 灰度图训练脚本
-├── test_preprocess_reduce.py     # 推理预处理测试
 ├── datasets.py                   # 数据集加载器
-├── benchmark_fair.py             # 公平吞吐量基准
 ├── docs/
 │   ├── research_story.md         # 研究叙事（给读者看）
 │   ├── research_story.html       # HTML 版
@@ -63,15 +59,13 @@ pip install torch torchvision timm pillow
 python inference.py --all --dataset cifar100 --gpu 0
 
 # 测试指定模型
-python inference.py --model downsample168 --dataset oxford_pets --gpu 0
 python inference.py --model mae_router75 --dataset cifar100 --gpu 0
+python inference.py --model mae_router50 --dataset cifar100 --gpu 0
 ```
 
 | --model | 说明 | 默认数据集 |
 |:--------|:-----|:---------:|
 | `baseline` | ViT-B/16 全量 (196 patches) | cifar100 |
-| `downsample168` | 降采样 168x168 (100 patches) | cifar100 |
-| `downsample112` | 降采样 112x112 (49 patches) | cifar100 |
 | `mae_router75` | MAE + Router 保留 75% (147 patches) | cifar100 |
 | `mae_router50` | MAE + Router 保留 50% (98 patches) | cifar100 |
 | `--all` | 运行全部模型 | — |
