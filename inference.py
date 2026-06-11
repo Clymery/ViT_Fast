@@ -63,37 +63,36 @@ def find_checkpoint(subpath):
     return f'checkpoints/{subpath}/best_model.pth'
 
 
-def download(url, target_path):
+def download(base_url, target_path, subpath):
     """Download checkpoint from HF. Tries both dir and flat structure."""
     if os.path.exists(target_path):
         return True
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
 
-    # Determine the subpath name from target_path
-    subname = target_path.split('/')[-2] if target_path.endswith('.pth') else target_path.split('/')[-1]
-
-    # Try all possible download URLs
-    alt_paths = [
-        target_path,  # dir/best_model.pth
-        target_path.replace(f'/{subname}/best_model.pth', f'/{subname}'),  # flat name
-        target_path.replace(f'/{subname}/router.pth', f'/{subname}'),  # flat name (router)
+    # Try multiple URL patterns
+    urls = [
+        f'{base_url}/best_model.pth',  # dir/best_model.pth
+        f'{base_url}/router.pth',       # dir/router.pth
+        base_url,                        # flat file (no .pth)
     ]
-    alt_paths = list(dict.fromkeys(alt_paths))  # deduplicate
 
-    for path in alt_paths:
-        if os.path.exists(path):
+    for url in urls:
+        print(f'  Downloading: {url}')
+        try:
+            urllib.request.urlretrieve(url, target_path)
+            print(f'  Saved to: {target_path}')
             return True
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        hf_url = f'{HF_BASE}/{path}'
-        print(f'  Downloading: {hf_url}')
-        for attempt in range(2):
-            try:
-                urllib.request.urlretrieve(hf_url, path)
-                print(f'  Saved to: {path}')
-                return True
-            except Exception:
-                if attempt == 0:
-                    continue
-    print(f'  Failed to download {subname}')
+        except Exception:
+            # Also try saving to a flat path
+            flat_path = target_path.replace('/best_model.pth', '').replace('/router.pth', '')
+            if flat_path != target_path:
+                try:
+                    urllib.request.urlretrieve(url, flat_path)
+                    print(f'  Saved to: {flat_path}')
+                    return True
+                except Exception:
+                    pass
+    print(f'  Failed to download {subpath}')
     return False
 
 
@@ -132,14 +131,18 @@ def main():
         print(f'Dataset: {dataset} ({ds_info[2]})')
 
         loader_fn, num_classes, img_size, _ = ds_info
-        _, _, test_loader, _ = loader_fn(batch_size=args.batch_size, data_dir='./data', num_workers=4)
+        result = loader_fn(batch_size=args.batch_size, data_dir='./data', num_workers=4)
+        if len(result) == 4:
+            _, _, test_loader, _ = result
+        else:
+            _, test_loader, _ = result
 
         # Find / download checkpoint
         ckpt_path = find_checkpoint(ckpt_subpath)
-        hf_url = f'{HF_BASE}/checkpoints/{ckpt_subpath}'
+        hf_base_url = f'{HF_BASE}/checkpoints/{ckpt_subpath}'
 
         if not os.path.exists(ckpt_path):
-            download(hf_url, ckpt_path)
+            download(hf_base_url, ckpt_path, ckpt_subpath)
             # Also try alternate path if first download fails
             alt_path = f'checkpoints/{ckpt_subpath}/best_model.pth'
             if not os.path.exists(ckpt_path) and os.path.exists(alt_path):
