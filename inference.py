@@ -28,14 +28,6 @@ MODELS = [
      'cifar100_vit_b16_ft',
      lambda nc: timm.create_model('vit_base_patch16_224.augreg_in21k', pretrained=True, num_classes=nc)),
 
-    ('downsample168', 'Downsampled 168x168 (100 patches)', 100, 'oxford_pets',
-     'oxford_pets_vit_b16_img168',
-     lambda nc: timm.create_model('vit_base_patch16_224.augreg_in21k', pretrained=True, num_classes=nc, img_size=168)),
-
-    ('downsample112', 'Downsampled 112x112 (49 patches)', 49, 'oxford_pets',
-     'oxford_pets_vit_b16_img112',
-     lambda nc: timm.create_model('vit_base_patch16_224.augreg_in21k', pretrained=True, num_classes=nc, img_size=112)),
-
     ('mae_router75', 'MAE + Router keep 75% (147 patches)', 147, 'cifar100',
      'cifar100_mae_patchsel_b16_keep75_distill',
      lambda nc: create_model('mae_patch_selection_vit_b16', num_classes=nc, keep_ratio=0.75,
@@ -57,7 +49,7 @@ def find_checkpoint(subpath):
         f'checkpoints/{subpath}.pth',
     ]
     for p in patterns:
-        if os.path.exists(p):
+        if os.path.isfile(p):
             return p
     # Return preferred path for download (will try both dir and flat)
     return f'checkpoints/{subpath}/best_model.pth'
