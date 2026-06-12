@@ -9,16 +9,14 @@ PROJECT_ROOT = os.path.dirname(APT_ROOT)
 sys.path.insert(0, APT_ROOT)
 sys.path.insert(0, PROJECT_ROOT)
 
-from apt_utils import (
+from Hierarchical_16_32_Learned_APT.train import (
+    HierarchicalAPTViT,
     TokenStatsAccumulator,
     build_key_attention_mask,
     compute_patch_entropy,
     denormalize_to_255,
 )
 from datasets import get_cifar100_loader
-from train_apt_patch_merge import APTPatchMergeViT
-from train_apt_patch_selection import APTPatchSelectionViT
-from train_hierarchical_apt import HierarchicalAPTViT
 
 
 class APTUtilityTests(unittest.TestCase):
@@ -79,27 +77,7 @@ class APTModelSmokeTests(unittest.TestCase):
         torch.testing.assert_close(single, mixed, atol=1e-5, rtol=1e-5)
         self.assertIsNotNone(model._last_token_counts)
 
-    def test_selection_batch_consistency(self):
-        model = APTPatchSelectionViT(
-            num_classes=10,
-            entropy_threshold=4.0,
-            min_keep=4,
-            max_keep_ratio=0.75,
-            pretrained=False,
-            backbone_name="vit_tiny_patch16_224",
-        )
-        self._assert_batch_consistency(model)
-
-    def test_merge_batch_consistency(self):
-        model = APTPatchMergeViT(
-            num_classes=10,
-            merge_threshold=4.0,
-            pretrained=False,
-            backbone_name="vit_tiny_patch16_224",
-        )
-        self._assert_batch_consistency(model)
-
-    def test_hierarchical_regions_cover_grid_once(self):
+    def test_a4_learned_regions_cover_grid_once(self):
         model = HierarchicalAPTViT(
             num_classes=10,
             thresholds={32: 4.0},
@@ -114,7 +92,7 @@ class APTModelSmokeTests(unittest.TestCase):
             coverage[row:row + height, col:col + width] += 1
         torch.testing.assert_close(coverage, torch.ones_like(coverage))
 
-    def test_hierarchical_backward_smoke(self):
+    def test_a3_average_backward_smoke(self):
         model = HierarchicalAPTViT(
             num_classes=10,
             thresholds={32: 4.0},

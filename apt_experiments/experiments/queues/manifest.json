@@ -1,16 +1,11 @@
 {
-  "queue_size": 6,
-  "datasets_ready": [
-    "cifar100",
-    "dtd",
-    "food101",
-    "oxford_pets"
-  ],
+  "queue_size": 2,
+  "method": "a4_learned_apt",
   "datasets_missing_scans": [],
-  "short_epochs": 5,
+  "epochs": 100,
   "files": [
-    "apt_experiments/experiments/queues/gpu_short_screen.jsonl",
-    "apt_experiments/experiments/queues/gpu_short_screen.ps1",
-    "apt_experiments/experiments/queues/gpu_short_screen.sh"
+    "apt_experiments/experiments/queues/gpu_a4.jsonl",
+    "apt_experiments/experiments/queues/gpu_a4.ps1",
+    "apt_experiments/experiments/queues/gpu_a4.sh"
   ]
 }

@@ -1,0 +1,24 @@
+{
+  "method": "historical_merge",
+  "dataset": "cifar100",
+  "seed": null,
+  "threshold": 5.5,
+  "best_epoch": 7,
+  "best_val_acc": 83.13,
+  "val_acc_diff": -8.56,
+  "test_acc": null,
+  "baseline_acc": 91.69,
+  "acc_diff": null,
+  "original_tokens": 196,
+  "avg_real_tokens": 73.0,
+  "avg_padded_tokens": null,
+  "token_ratio": 0.37244897959183676,
+  "latency_ms": null,
+  "throughput": null,
+  "peak_memory_mb": null,
+  "token_stats": {},
+  "args": {
+    "aggregation": "average",
+    "note": "Historical fixed 16/32 Merge result from EXPERIMENTS.md; preliminary epoch-7 validation result."
+  }
+}

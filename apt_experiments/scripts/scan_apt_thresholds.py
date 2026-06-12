@@ -14,7 +14,11 @@ PROJECT_ROOT = os.path.dirname(APT_ROOT)
 sys.path.insert(0, APT_ROOT)
 sys.path.insert(0, PROJECT_ROOT)
 
-from apt_utils import compute_patch_entropy, denormalize_to_255, get_normalization
+from Hierarchical_16_32_Learned_APT.train import (
+    compute_patch_entropy,
+    denormalize_to_255,
+    get_normalization,
+)
 from datasets import (
     get_cifar100_loader,
     get_dtd_loader,
@@ -49,14 +53,7 @@ def describe(values):
     }
 
 
-def selection_counts(entropy16, threshold, min_keep, max_keep_ratio):
-    flat = entropy16.flatten(1)
-    counts = (flat >= threshold).sum(dim=1)
-    maximum = int(flat.shape[1] * max_keep_ratio)
-    return counts.clamp(min=min_keep, max=maximum)
-
-
-def merge_counts(entropy32, threshold, base_tokens):
+def a4_token_counts(entropy32, threshold, base_tokens):
     merged = (entropy32.flatten(1) < threshold).sum(dim=1)
     return base_tokens - 3 * merged
 
@@ -87,8 +84,6 @@ def main():
     parser.add_argument("--max_samples", type=int, default=1000)
     parser.add_argument("--thresholds", default="0.0:6.0:0.25")
     parser.add_argument("--bins", type=int, default=64)
-    parser.add_argument("--min_keep", type=int, default=32)
-    parser.add_argument("--max_keep_ratio", type=float, default=0.9)
     parser.add_argument(
         "--output_dir", default=os.path.join(APT_ROOT, "experiments", "scans")
     )
@@ -131,28 +126,22 @@ def main():
     thresholds = parse_thresholds(args.thresholds)
     rows = []
     for threshold in thresholds:
-        counts_by_method = {
-            "selection": selection_counts(
-                entropy16, threshold, args.min_keep, args.max_keep_ratio
-            ),
-            "merge": merge_counts(entropy32, threshold, base_tokens),
-        }
-        for method, counts in counts_by_method.items():
-            stats = describe(counts.numpy())
-            rows.append({
-                "dataset": args.dataset,
-                "method": method,
-                "threshold": threshold,
-                "samples": seen,
-                "base_tokens": base_tokens,
-                "mean_tokens": stats["mean"],
-                "token_ratio": stats["mean"] / base_tokens,
-                "std_tokens": stats["std"],
-                "p50_tokens": stats["p50"],
-                "p90_tokens": stats["p90"],
-                "min_tokens": stats["min"],
-                "max_tokens": stats["max"],
-            })
+        counts = a4_token_counts(entropy32, threshold, base_tokens)
+        stats = describe(counts.numpy())
+        rows.append({
+            "dataset": args.dataset,
+            "method": "a4_learned_apt",
+            "threshold": threshold,
+            "samples": seen,
+            "base_tokens": base_tokens,
+            "mean_tokens": stats["mean"],
+            "token_ratio": stats["mean"] / base_tokens,
+            "std_tokens": stats["std"],
+            "p50_tokens": stats["p50"],
+            "p90_tokens": stats["p90"],
+            "min_tokens": stats["min"],
+            "max_tokens": stats["max"],
+        })
 
     payload = {
         "dataset": args.dataset,
@@ -166,8 +155,9 @@ def main():
             "patch32": describe(entropy32.numpy().reshape(-1)),
         },
         "candidates": {
-            method: find_candidates(rows, method, base_tokens)
-            for method in ("selection", "merge")
+            "a4_learned_apt": find_candidates(
+                rows, "a4_learned_apt", base_tokens
+            )
         },
         "rows": rows,
     }
