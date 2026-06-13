@@ -1,0 +1,23 @@
+{
+  "dataset": "oxford_pets",
+  "gpu": 0,
+  "image_size": 224,
+  "threshold32": 4.0,
+  "entropy_bins": 64,
+  "batch_size": 32,
+  "accum": 4,
+  "num_workers": 8,
+  "no_amp": false,
+  "log_interval": 20,
+  "lr": 3e-05,
+  "weight_decay": 0.05,
+  "label_smoothing": 0.1,
+  "epochs": 70,
+  "seed": 42,
+  "resume": null,
+  "eval_only": null,
+  "backbone": "vit_base_patch16_224.augreg_in21k",
+  "pretrained_checkpoint": "apt_experiments/pretrained/model.safetensors",
+  "no_pretrained": false,
+  "aggregation": "learned"
+}

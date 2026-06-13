@@ -199,7 +199,7 @@ class TokenStatsAccumulator:
         self.padded_counts = []
 
     def update(self, real_counts: torch.Tensor, padded_length: Optional[int] = None):
-        real = real_counts.detach().to("cpu", torch.float32).reshape(-1)
+        real = real_counts.detach().to(torch.float32).reshape(-1)
         self.real_counts.append(real)
         if padded_length is None:
             padded_length = int(real.max().item())
@@ -257,12 +257,14 @@ def train_one_epoch(
     accum_steps=1,
     epoch=None,
     total_epochs=None,
+    use_amp=True,
+    log_interval=20,
 ):
     model.train()
-    total_loss = 0.0
-    correct = 0
+    total_loss = torch.zeros((), device=device)
+    correct = torch.zeros((), dtype=torch.long, device=device)
     total = 0
-    optimizer.zero_grad()
+    optimizer.zero_grad(set_to_none=True)
 
     desc = f"Epoch {epoch}/{total_epochs}" if epoch is not None else "Train"
     pbar = tqdm(
@@ -273,58 +275,86 @@ def train_one_epoch(
         dynamic_ncols=True,
     )
     for batch_idx, (images, targets) in pbar:
-        images, targets = images.to(device), targets.to(device)
-        logits = model(images)
-        loss = criterion(logits, targets) / accum_steps
+        images = images.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
+        with torch.autocast(
+            device_type="cuda",
+            dtype=torch.bfloat16,
+            enabled=use_amp,
+        ):
+            logits = model(images)
+            full_loss = criterion(logits, targets)
+            loss = full_loss / accum_steps
         loss.backward()
 
         if (batch_idx + 1) % accum_steps == 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
-        total_loss += loss.item() * accum_steps
+        total_loss += full_loss.detach()
         predicted = logits.argmax(dim=1)
         total += targets.size(0)
-        correct += predicted.eq(targets).sum().item()
-        pbar.set_postfix({
-            "loss": f"{total_loss / (batch_idx + 1):.4f}",
-            "acc": f"{100.0 * correct / total:.1f}%",
-            "tokens": f"{model._last_k}/{model._last_n}",
-        })
+        correct += predicted.eq(targets).sum()
+        if (batch_idx + 1) % log_interval == 0:
+            pbar.set_postfix({
+                "loss": f"{total_loss.item() / (batch_idx + 1):.4f}",
+                "acc": f"{100.0 * correct.item() / total:.1f}%",
+                "tokens": f"{model._last_k}/{model._last_n}",
+            })
 
     if (batch_idx + 1) % accum_steps != 0:
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
 
-    return total_loss / len(loader), 100.0 * correct / total
+    return total_loss.item() / len(loader), 100.0 * correct.item() / total
 
 
 @torch.no_grad()
-def evaluate(model, loader, criterion, device, track_patches=False, desc="Eval"):
+def evaluate(
+    model,
+    loader,
+    criterion,
+    device,
+    track_patches=False,
+    desc="Eval",
+    use_amp=True,
+    log_interval=20,
+):
     model.eval()
-    total_loss = 0.0
-    correct = 0
+    total_loss = torch.zeros((), device=device)
+    correct = torch.zeros((), dtype=torch.long, device=device)
     total = 0
     token_stats = TokenStatsAccumulator() if track_patches else None
 
     pbar = tqdm(loader, total=len(loader), desc=desc, unit="batch", dynamic_ncols=True)
-    for images, targets in pbar:
-        images, targets = images.to(device), targets.to(device)
-        logits = model(images)
-        total_loss += criterion(logits, targets).item()
+    for batch_idx, (images, targets) in enumerate(pbar):
+        images = images.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
+        with torch.autocast(
+            device_type="cuda",
+            dtype=torch.bfloat16,
+            enabled=use_amp,
+        ):
+            logits = model(images)
+            loss = criterion(logits, targets)
+        total_loss += loss
         predicted = logits.argmax(dim=1)
         total += targets.size(0)
-        correct += predicted.eq(targets).sum().item()
+        correct += predicted.eq(targets).sum()
         if track_patches:
             token_stats.update(model._last_token_counts, model._last_k)
-        pbar.set_postfix({
-            "loss": f"{total_loss / max(pbar.n, 1):.4f}",
-            "acc": f"{100.0 * correct / total:.1f}%",
-        })
+        if (batch_idx + 1) % log_interval == 0:
+            pbar.set_postfix({
+                "loss": f"{total_loss.item() / (batch_idx + 1):.4f}",
+                "acc": f"{100.0 * correct.item() / total:.1f}%",
+            })
 
-    result = (total_loss / len(loader), 100.0 * correct / total)
+    result = (
+        total_loss.item() / len(loader),
+        100.0 * correct.item() / total,
+    )
     if track_patches:
         stats = token_stats.compute()
         result += (
@@ -337,10 +367,15 @@ def evaluate(model, loader, criterion, device, track_patches=False, desc="Eval")
 
 
 @torch.no_grad()
-def compute_efficiency_metrics(model, loader, device):
+def compute_efficiency_metrics(model, loader, device, use_amp=True):
     model.eval()
     for images, _ in loader:
-        _ = model(images.to(device))
+        with torch.autocast(
+            device_type="cuda",
+            dtype=torch.bfloat16,
+            enabled=use_amp,
+        ):
+            _ = model(images.to(device, non_blocking=True))
         break
     if device != "cpu":
         torch.cuda.synchronize()
@@ -349,11 +384,16 @@ def compute_efficiency_metrics(model, loader, device):
     total_time = 0.0
     total_samples = 0
     for images, _ in loader:
-        images = images.to(device)
+        images = images.to(device, non_blocking=True)
         if device != "cpu":
             torch.cuda.synchronize()
         start = time.time()
-        _ = model(images)
+        with torch.autocast(
+            device_type="cuda",
+            dtype=torch.bfloat16,
+            enabled=use_amp,
+        ):
+            _ = model(images)
         if device != "cpu":
             torch.cuda.synchronize()
         total_time += time.time() - start
@@ -388,6 +428,73 @@ class LearnedTokenAggregator(nn.Module):
         return (tokens * weights).sum(dim=1)
 
 
+def _extract_state_dict(checkpoint):
+    if not isinstance(checkpoint, dict):
+        raise TypeError("pretrained checkpoint must contain a state dict")
+    for key in (
+        "model_state_dict",
+        "state_dict",
+        "model",
+        "model_ema",
+    ):
+        value = checkpoint.get(key)
+        if isinstance(value, dict):
+            checkpoint = value
+            break
+    return {
+        key.removeprefix("module.").removeprefix("model."): value
+        for key, value in checkpoint.items()
+        if isinstance(value, torch.Tensor)
+    }
+
+
+def load_local_pretrained(backbone, checkpoint_path):
+    """Load matching ViT weights without requiring network access."""
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(
+            f"Pretrained checkpoint not found: {checkpoint_path}"
+        )
+
+    if checkpoint_path.endswith(".safetensors"):
+        try:
+            from safetensors.torch import load_file
+        except ImportError as error:
+            raise RuntimeError(
+                "Loading .safetensors requires: pip install safetensors"
+            ) from error
+        state_dict = load_file(checkpoint_path, device="cpu")
+    else:
+        checkpoint = torch.load(
+            checkpoint_path, map_location="cpu", weights_only=False
+        )
+        state_dict = _extract_state_dict(checkpoint)
+
+    model_state = backbone.state_dict()
+    compatible = {
+        key: value
+        for key, value in state_dict.items()
+        if key in model_state and model_state[key].shape == value.shape
+    }
+    if not compatible:
+        raise RuntimeError(
+            "No compatible ViT parameters were found in "
+            f"{checkpoint_path}. Check the backbone architecture."
+        )
+
+    incompatible = backbone.load_state_dict(compatible, strict=False)
+    print(
+        f"[PRETRAINED] Loaded {len(compatible)}/{len(model_state)} tensors "
+        f"from {checkpoint_path}",
+        flush=True,
+    )
+    if incompatible.missing_keys:
+        print(
+            f"[PRETRAINED] Missing tensors: {len(incompatible.missing_keys)} "
+            "(the classification head may differ, which is expected)",
+            flush=True,
+        )
+
+
 class HierarchicalAPTViT(nn.Module):
     """ViT with entropy-guided hierarchical 16/32 patch tokens."""
 
@@ -405,6 +512,7 @@ class HierarchicalAPTViT(nn.Module):
         input_std=(0.229, 0.224, 0.225),
         entropy_bins=64,
         backbone_name="vit_base_patch16_224.augreg_in21k",
+        pretrained_checkpoint=None,
     ):
         super().__init__()
         self.img_size = img_size
@@ -414,13 +522,36 @@ class HierarchicalAPTViT(nn.Module):
         self.aggregation = aggregation
         self.use_scale_encoding = use_scale_encoding
 
-        backbone = timm.create_model(
-            backbone_name,
-            pretrained=pretrained,
-            num_classes=num_classes,
-            drop_path_rate=drop_path_rate,
-            img_size=img_size,
-        )
+        create_kwargs = {
+            "num_classes": num_classes,
+            "drop_path_rate": drop_path_rate,
+            "img_size": img_size,
+        }
+        if pretrained_checkpoint:
+            backbone = timm.create_model(
+                backbone_name,
+                pretrained=False,
+                **create_kwargs,
+            )
+            load_local_pretrained(backbone, pretrained_checkpoint)
+        else:
+            try:
+                backbone = timm.create_model(
+                    backbone_name,
+                    pretrained=pretrained,
+                    **create_kwargs,
+                )
+            except Exception as error:
+                if pretrained:
+                    raise RuntimeError(
+                        "Unable to download the timm pretrained backbone. "
+                        "The server cannot reach Hugging Face. Download the "
+                        "ViT-B/16 IN-21K weights on a machine with network "
+                        "access, upload them to the server, and rerun with "
+                        "--pretrained_checkpoint /path/to/weights.pth. "
+                        "Use --no_pretrained only for smoke tests."
+                    ) from error
+                raise
         self.patch_embed = backbone.patch_embed
         self.cls_token = backbone.cls_token
         self.pos_embed = backbone.pos_embed
@@ -454,6 +585,13 @@ class HierarchicalAPTViT(nn.Module):
                     f"{size}x{size} patches do not tile grid {self.grid_size}"
                 )
         self.patch_sizes = tuple(valid_sizes)
+        if self.patch_sizes != (
+            self.base_patch_size,
+            self.base_patch_size * 2,
+        ):
+            raise ValueError(
+                "the optimized A4 path currently supports only 16/32 patches"
+            )
 
         thresholds = thresholds or {}
         self.thresholds = {
@@ -492,94 +630,113 @@ class HierarchicalAPTViT(nn.Module):
             return tokens.mean(dim=1)
         return self.aggregators[str(patch_size)](tokens)
 
-    def _region_indices(self, row, col, cells, device):
-        grid = self.grid_size[1]
-        rows = torch.arange(row, row + cells, device=device)
-        cols = torch.arange(col, col + cells, device=device)
-        return (rows[:, None] * grid + cols[None, :]).reshape(-1)
+    def _build_compact_tokens(self, fine_tokens, merge_mask):
+        """Build and compact all 16/32 candidates with batched tensor ops."""
+        batch, _, embed_dim = fine_tokens.shape
+        grid_h, grid_w = self.grid_size
+        coarse_h, coarse_w = grid_h // 2, grid_w // 2
 
-    def _build_image_tokens(self, image_index, fine_tokens, entropy_maps):
-        tokens = []
-        positions = []
-        regions = []
-        base_positions = self.pos_embed[0, 1:]
-        largest_size = self.patch_sizes[-1]
-        largest_cells = largest_size // self.base_patch_size
+        region_tokens = (
+            fine_tokens.reshape(batch, coarse_h, 2, coarse_w, 2, embed_dim)
+            .permute(0, 1, 3, 2, 4, 5)
+            .reshape(batch, coarse_h * coarse_w, 4, embed_dim)
+        )
+        base_positions = (
+            self.pos_embed[0, 1:]
+            .reshape(coarse_h, 2, coarse_w, 2, embed_dim)
+            .permute(0, 2, 1, 3, 4)
+            .reshape(coarse_h * coarse_w, 4, embed_dim)
+        )
 
-        def visit(row, col, patch_size):
-            cells = patch_size // self.base_patch_size
-            should_merge = False
-            if patch_size > self.base_patch_size:
-                entropy = entropy_maps[patch_size][
-                    image_index, row // cells, col // cells
-                ]
-                should_merge = bool(entropy < self.thresholds[patch_size])
+        coarse_size = self.base_patch_size * 2
+        coarse_tokens = self._aggregate(
+            region_tokens.reshape(-1, 4, embed_dim),
+            coarse_size,
+        ).reshape(batch, coarse_h * coarse_w, embed_dim)
+        coarse_positions = base_positions.mean(dim=1)
 
-            if should_merge or patch_size == self.base_patch_size:
-                indices = self._region_indices(
-                    row, col, cells, fine_tokens.device
-                )
-                region_tokens = fine_tokens[image_index, indices]
-                token = self._aggregate(
-                    region_tokens.unsqueeze(0), patch_size
-                ).squeeze(0)
-                position = base_positions[indices].mean(dim=0)
-                if self.use_scale_encoding:
-                    position = position + self.scale_embed[
-                        self.scale_to_index[patch_size]
-                    ]
-                tokens.append(token)
-                positions.append(position)
-                regions.append((row, col, cells, cells, patch_size))
-                return
+        fine_positions = base_positions
+        if self.use_scale_encoding:
+            fine_positions = (
+                fine_positions
+                + self.scale_embed[self.scale_to_index[self.base_patch_size]]
+            )
+            coarse_positions = (
+                coarse_positions
+                + self.scale_embed[self.scale_to_index[coarse_size]]
+            )
 
-            child_size = patch_size // 2
-            child_cells = cells // 2
-            for row_offset in (0, child_cells):
-                for col_offset in (0, child_cells):
-                    visit(row + row_offset, col + col_offset, child_size)
+        first_tokens = torch.where(
+            merge_mask.unsqueeze(-1),
+            coarse_tokens,
+            region_tokens[:, :, 0],
+        )
+        candidates = torch.cat(
+            [first_tokens.unsqueeze(2), region_tokens[:, :, 1:]],
+            dim=2,
+        )
+        first_positions = torch.where(
+            merge_mask.unsqueeze(-1),
+            coarse_positions.unsqueeze(0),
+            fine_positions[:, 0].unsqueeze(0),
+        )
+        candidate_positions = torch.cat(
+            [
+                first_positions.unsqueeze(2),
+                fine_positions[:, 1:].unsqueeze(0).expand(batch, -1, -1, -1),
+            ],
+            dim=2,
+        )
 
-        for row in range(0, self.grid_size[0], largest_cells):
-            for col in range(0, self.grid_size[1], largest_cells):
-                visit(row, col, largest_size)
+        valid = torch.cat(
+            [
+                torch.ones_like(merge_mask).unsqueeze(-1),
+                (~merge_mask).unsqueeze(-1).expand(-1, -1, 3),
+            ],
+            dim=2,
+        )
 
-        return torch.stack(tokens), torch.stack(positions), regions
+        candidates = candidates.flatten(1, 2)
+        candidate_positions = candidate_positions.flatten(1, 2)
+        valid = valid.flatten(1)
+        counts = valid.sum(dim=1)
+
+        slot_count = valid.shape[1]
+        slot_indices = torch.arange(slot_count, device=fine_tokens.device)
+        sort_keys = slot_indices.unsqueeze(0) + (~valid) * slot_count
+        order = sort_keys.argsort(dim=1)
+        gather_index = order.unsqueeze(-1).expand(-1, -1, embed_dim)
+        candidates = candidates.gather(1, gather_index)
+        candidate_positions = candidate_positions.gather(1, gather_index)
+
+        max_tokens = int(counts.max().item())
+        candidates = candidates[:, :max_tokens]
+        candidate_positions = candidate_positions[:, :max_tokens]
+        compact_valid = (
+            torch.arange(max_tokens, device=fine_tokens.device).unsqueeze(0)
+            < counts.unsqueeze(1)
+        )
+        return candidates, candidate_positions, compact_valid, counts
 
     def forward(self, images):
         batch = images.shape[0]
+        coarse_size = self.base_patch_size * 2
         images_255 = denormalize_to_255(
             images, self.input_mean, self.input_std
         )
         entropy_maps = compute_patch_entropy(
             images_255,
-            patch_sizes=self.patch_sizes,
+            patch_sizes=(coarse_size,),
             bins=self.entropy_bins,
         )
         fine_tokens = self.patch_embed(images)
-
-        token_lists = []
-        position_lists = []
-        region_lists = []
-        counts = []
-        for image_index in range(batch):
-            tokens, positions, regions = self._build_image_tokens(
-                image_index, fine_tokens, entropy_maps
-            )
-            token_lists.append(tokens)
-            position_lists.append(positions)
-            region_lists.append(regions)
-            counts.append(tokens.shape[0])
-
-        max_tokens = max(counts)
-        hidden = fine_tokens.new_zeros(batch, max_tokens, self.embed_dim)
-        positions = fine_tokens.new_zeros(batch, max_tokens, self.embed_dim)
-        valid = torch.zeros(
-            batch, max_tokens, dtype=torch.bool, device=images.device
+        merge_mask = (
+            entropy_maps[coarse_size] < self.thresholds[coarse_size]
+        ).flatten(1)
+        hidden, positions, valid, counts = self._build_compact_tokens(
+            fine_tokens,
+            merge_mask,
         )
-        for image_index, count in enumerate(counts):
-            hidden[image_index, :count] = token_lists[image_index]
-            positions[image_index, :count] = position_lists[image_index]
-            valid[image_index, :count] = True
 
         cls_token = self.cls_token.expand(batch, -1, -1)
         cls_position = self.pos_embed[:, :1].expand(batch, -1, -1)
@@ -595,12 +752,10 @@ class HierarchicalAPTViT(nn.Module):
         )
         logits = self.head(self.norm(hidden)[:, 0])
 
-        self._last_k = max_tokens
+        self._last_k = hidden.shape[1] - 1
         self._last_n = self.num_patches
-        self._last_token_counts = torch.tensor(
-            counts, dtype=torch.long, device=images.device
-        )
-        self._last_regions = region_lists
+        self._last_token_counts = counts
+        self._last_regions = None
         return logits
 
 
@@ -619,6 +774,9 @@ def main(aggregation="learned"):
     parser.add_argument("--entropy_bins", type=int, default=64)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--accum", type=int, default=4)
+    parser.add_argument("--num_workers", type=int, default=8)
+    parser.add_argument("--no_amp", action="store_true")
+    parser.add_argument("--log_interval", type=int, default=20)
     parser.add_argument("--lr", type=float, default=3e-5)
     parser.add_argument("--weight_decay", type=float, default=0.05)
     parser.add_argument("--label_smoothing", type=float, default=0.1)
@@ -629,6 +787,11 @@ def main(aggregation="learned"):
     parser.add_argument(
         "--backbone", default="vit_base_patch16_224.augreg_in21k"
     )
+    parser.add_argument(
+        "--pretrained_checkpoint",
+        default=None,
+        help="Local ViT checkpoint; when provided, no online download is used",
+    )
     parser.add_argument("--no_pretrained", action="store_true")
     args = parser.parse_args()
     args.aggregation = aggregation
@@ -638,8 +801,11 @@ def main(aggregation="learned"):
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     device = f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu"
+    use_amp = device != "cpu" and not args.no_amp
     if not torch.cuda.is_available() and not args.eval_only:
         raise RuntimeError(
             "CUDA is required for training. CPU is limited to direct model smoke tests."
@@ -649,7 +815,7 @@ def main(aggregation="learned"):
     loader_kwargs = dict(
         batch_size=args.batch_size,
         data_dir=os.path.join(PROJECT_ROOT, "data"),
-        num_workers=4,
+        num_workers=args.num_workers,
         image_size=args.image_size,
     )
     if args.dataset == "cifar100":
@@ -674,6 +840,7 @@ def main(aggregation="learned"):
         input_std=get_normalization(args.dataset)[1],
         entropy_bins=args.entropy_bins,
         backbone_name=args.backbone,
+        pretrained_checkpoint=args.pretrained_checkpoint,
     ).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
 
@@ -681,13 +848,22 @@ def main(aggregation="learned"):
         checkpoint = torch.load(args.eval_only, map_location=device)
         model.load_state_dict(checkpoint["model_state_dict"])
         test_loss, test_acc = evaluate(
-            model, test_loader, criterion, device, desc="Test"
+            model,
+            test_loader,
+            criterion,
+            device,
+            desc="Test",
+            use_amp=use_amp,
+            log_interval=args.log_interval,
         )
         print(f"Test loss: {test_loss:.4f}, Test acc: {test_acc:.2f}%")
         return
 
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lr, weight_decay=args.weight_decay
+        model.parameters(),
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        fused=device != "cpu",
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=epochs
@@ -745,10 +921,19 @@ def main(aggregation="learned"):
             args.accum,
             epoch=epoch + 1,
             total_epochs=epochs,
+            use_amp=use_amp,
+            log_interval=args.log_interval,
         )
         scheduler.step()
         val_loss, val_acc, avg_tokens, total_tokens, keep_pct, stats = evaluate(
-            model, val_loader, criterion, device, track_patches=True, desc="Val"
+            model,
+            val_loader,
+            criterion,
+            device,
+            track_patches=True,
+            desc="Val",
+            use_amp=use_amp,
+            log_interval=args.log_interval,
         )
         if val_acc > best_val_acc:
             best_val_acc = val_acc
@@ -804,10 +989,16 @@ def main(aggregation="learned"):
     best_token_stats = checkpoint.get("token_stats", {})
     original_tokens = int(checkpoint.get("avg_total", model.num_patches))
     test_loss, test_acc = evaluate(
-        model, test_loader, criterion, device, desc="Test"
+        model,
+        test_loader,
+        criterion,
+        device,
+        desc="Test",
+        use_amp=use_amp,
+        log_interval=args.log_interval,
     )
     latency, throughput, peak_memory_mb = compute_efficiency_metrics(
-        model, test_loader, device
+        model, test_loader, device, use_amp=use_amp
     )
     baseline = BASELINE_ACC[args.dataset]
     write_result_json(os.path.join(save_dir, "results.json"), {

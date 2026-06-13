@@ -1,0 +1,99 @@
+{
+  "dataset": "cifar100",
+  "gpu": "NVIDIA GeForce RTX 4090 D",
+  "batch_size": 32,
+  "image_size": 224,
+  "precision": "bf16",
+  "warmup_batches": 20,
+  "timed_batches": 100,
+  "repeats": 3,
+  "baseline": {
+    "samples": 3200,
+    "batches": 100,
+    "total_time_ms": 1282.879870414734,
+    "latency_ms_per_sample": 0.40089995950460433,
+    "throughput_samples_per_second": 2494.3878797985135,
+    "peak_memory_mb": 672.31005859375,
+    "all_repetitions": [
+      {
+        "samples": 3200,
+        "batches": 100,
+        "total_time_ms": 1282.879870414734,
+        "latency_ms_per_sample": 0.40089995950460433,
+        "throughput_samples_per_second": 2494.3878797985135,
+        "peak_memory_mb": 672.31005859375
+      },
+      {
+        "samples": 3200,
+        "batches": 100,
+        "total_time_ms": 1282.3762531280518,
+        "latency_ms_per_sample": 0.40074257910251615,
+        "throughput_samples_per_second": 2495.367480639447,
+        "peak_memory_mb": 672.31005859375
+      },
+      {
+        "samples": 3200,
+        "batches": 100,
+        "total_time_ms": 1285.4552927017212,
+        "latency_ms_per_sample": 0.40170477896928786,
+        "throughput_samples_per_second": 2489.390349215772,
+        "peak_memory_mb": 672.31005859375
+      }
+    ],
+    "checkpoint": "checkpoints/cifar100_vit_b16_ft",
+    "test_accuracy": 91.72
+  },
+  "a4_learned_apt": {
+    "samples": 3200,
+    "batches": 100,
+    "total_time_ms": 1438.9206113815308,
+    "latency_ms_per_sample": 0.44966269105672835,
+    "throughput_samples_per_second": 2223.8891949206486,
+    "peak_memory_mb": 717.0751953125,
+    "avg_real_tokens": 146.0396875,
+    "avg_padded_tokens": 191.74,
+    "original_tokens": 196,
+    "all_repetitions": [
+      {
+        "samples": 3200,
+        "batches": 100,
+        "total_time_ms": 1438.9206113815308,
+        "latency_ms_per_sample": 0.44966269105672835,
+        "throughput_samples_per_second": 2223.8891949206486,
+        "peak_memory_mb": 717.0751953125,
+        "avg_real_tokens": 146.0396875,
+        "avg_padded_tokens": 191.74,
+        "original_tokens": 196
+      },
+      {
+        "samples": 3200,
+        "batches": 100,
+        "total_time_ms": 1436.7152042388916,
+        "latency_ms_per_sample": 0.44897350132465363,
+        "throughput_samples_per_second": 2227.3029411526404,
+        "peak_memory_mb": 717.0751953125,
+        "avg_real_tokens": 146.0396875,
+        "avg_padded_tokens": 191.74,
+        "original_tokens": 196
+      },
+      {
+        "samples": 3200,
+        "batches": 100,
+        "total_time_ms": 1446.2424640655518,
+        "latency_ms_per_sample": 0.45195077002048495,
+        "throughput_samples_per_second": 2212.6303711235505,
+        "peak_memory_mb": 717.0751953125,
+        "avg_real_tokens": 146.0396875,
+        "avg_padded_tokens": 191.74,
+        "original_tokens": 196
+      }
+    ],
+    "checkpoint": "apt_experiments/Hierarchical_16_32_Learned_APT/checkpoints/cifar100_a4_learned_224_t32_3.25_s42/checkpoint_epoch_79.pth",
+    "threshold32": 3.25,
+    "entropy_bins": 64,
+    "test_accuracy": 91.2
+  },
+  "speedup_ratio": 0.8915570881864152,
+  "speedup_percent": -10.844291181358479,
+  "latency_reduction_percent": -12.163316656948675
+}

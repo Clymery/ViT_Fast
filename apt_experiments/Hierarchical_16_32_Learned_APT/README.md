@@ -11,8 +11,16 @@
 
 ## 运行
 
+正式实验使用本地 IN-21K 预训练权重，避免 GPU 服务器无法访问 Hugging Face：
+
 ```bash
-python apt_experiments/Hierarchical_16_32_Learned_APT/train.py --dataset cifar100 --gpu 0 --threshold32 3.25
+python apt_experiments/Hierarchical_16_32_Learned_APT/train.py \
+  --dataset cifar100 \
+  --gpu 0 \
+  --threshold32 3.25 \
+  --pretrained_checkpoint apt_experiments/pretrained/vit_base_patch16_224_augreg_in21k.pth
 ```
+
+`--no_pretrained` 仅用于启动检查，不用于正式对比实验。
 
 训练输出默认写入本目录下的 `checkpoints/`。

@@ -46,6 +46,11 @@ def main():
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--accum", type=int, default=8)
     parser.add_argument("--seeds", nargs="+", type=int, default=[42])
+    parser.add_argument(
+        "--pretrained_checkpoint",
+        default=None,
+        help="Local pretrained ViT checkpoint on the GPU server",
+    )
     args = parser.parse_args()
 
     scans = load_scans(args.scan_dir)
@@ -79,6 +84,12 @@ def main():
                     f"--entropy_bins {scan['bins']} "
                     f"--threshold32 {candidate['threshold']}"
                 )
+                if args.pretrained_checkpoint:
+                    entry["pretrained_checkpoint"] = args.pretrained_checkpoint
+                    entry["command"] += (
+                        f" --pretrained_checkpoint "
+                        f"{args.pretrained_checkpoint}"
+                    )
                 queue.append(entry)
 
     os.makedirs(args.output_dir, exist_ok=True)

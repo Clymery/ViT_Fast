@@ -6,3 +6,4 @@ Pillow
 numpy
 tqdm
 matplotlib
+safetensors

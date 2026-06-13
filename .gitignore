@@ -1,5 +1,5 @@
 # Datasets and downloaded archives
-data/
+/data/
 *.zip
 *.tar
 *.tar.gz
@@ -15,13 +15,21 @@ __pycache__/
 venv/
 
 # Model weights and training artifacts
-checkpoints/*
-!checkpoints/README.md
-apt_experiments/checkpoints/
+/checkpoints/**
+!/checkpoints/README.md
+/apt_experiments/checkpoints/
+/apt_experiments/**/checkpoints/
+/apt_experiments/pretrained/*
+!/apt_experiments/pretrained/README.md
 *.pth
 *.pt
 *.ckpt
 *.safetensors
+*.onnx
+*.bin
+*.h5
+*.hdf5
+*.log
 logs/
 runs/
 wandb/
